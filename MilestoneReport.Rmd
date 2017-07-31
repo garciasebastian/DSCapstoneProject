@@ -1,0 +1,241 @@
+---
+title: "Data Science Capstone Project <br/> Milestone Report"
+author: "Sebastian Garcia"
+date: "July 30, 2017"
+output:
+  html_document:
+    highlight: textmate
+    keep_md: yes
+    theme: cosmo
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(cache = FALSE)
+library(RWekajars)
+library(qdapDictionaries)
+library(qdapRegex)
+library(qdapTools)
+library(RColorBrewer)
+library(qdap)
+library(NLP)
+library(tm)
+library(SnowballC)
+library(slam)
+library(RWeka)
+library(rJava)
+library(wordcloud)
+library(stringr)
+library(DT)
+library(stringi)
+library(googleVis)
+```
+
+# Introduction
+
+This report will be applying data science in the area of natural language processing in order to help mobile users to enter text quickly and with less errors. The following lines addressing the data extraction, cleaning and text mining of the so called [HC Copora](http://www.corpora.heliohost.org). This report is part of the data science capstone project of [Coursera](https://www.coursera.org) and [Swiftkey](http://swiftkey.com/). The plots, code chunks and remarks will explain the reader the first steps to build the word prediction application.
+
+This document describes the procedures and code that is use to achieve the objective expressed in project's first three tasks:
+
+* Task 1: Getting and Cleaning the Data
+* Task 2: Exploratory Data Analysis
+* Task 3: Modeling
+
+The final objective of the project is to create a "next word" predictor application that can be used in data input applications to suggest the user a list of alternatives for the next word when writing text. This model can be useful for assisting users when writing text in limited devices like mobile phones.
+
+## Task 1: Getting and Cleaning the Data
+The main objetive of this task is to get the data from the source and then clean and sample it.
+
+### Getting and loading the Data
+The data for this project is provided by Coursera, it can be downloaded here [Project Dataset](https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip), the following code will download, unzip and save the files related to English language into the */data* folder.
+
+Since files are huge, downloading and extracting are optimized to be executed only once
+
+```{r}
+#Set source and destination paths
+
+destination <- file.path(getwd(), "data")
+
+#Create data folder if doesn't exists
+if(!file.exists(destination)){
+    dir.create(destination)
+}
+
+#Download file if doesn't exists
+if(!file.exists(file.path(destination,"Coursera-SwiftKey.zip"))){
+    download.file("https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip", file.path(destination,"Coursera-SwiftKey.zip"))
+}
+
+#Determine files to unzip, only english files that are not previously unziped
+englishfiles <- unzip(file.path(destination,"Coursera-SwiftKey.zip"),list=TRUE)
+englishfiles <- englishfiles[grepl("en_US.*\\.txt", englishfiles$Name),1]
+englishfiles2 <- englishfiles[!file.exists(file.path(destination,basename(englishfiles)))]
+
+if(length(englishfiles2)>=1){
+    unzip(file.path(destination,"Coursera-SwiftKey.zip"), files = englishfiles, exdir=destination, junkpaths = TRUE)
+}
+rm(englishfiles2)
+englishfiles <- file.path(destination,basename(englishfiles))
+rm('englishfiles')
+```
+
+Now, we load data into datasets
+```{r}
+if(!exists("rblogs")){
+    rblogs <- readLines("./data/en_US.blogs.txt", encoding = "UTF-8", skipNul=TRUE)
+}
+if(!exists("rnews")){
+    rnews <- readLines("./data/en_US.news.txt", encoding = "UTF-8", skipNul=TRUE)
+}
+if(!exists("rtwitter")){
+    rtwitter <- readLines("./data/en_US.twitter.txt", encoding = "UTF-8", skipNul=TRUE)
+}
+```
+
+### Sampling the Data
+
+
+In order to enable faster data processing, a data sample from all three sources was generated and save to a text file.
+
+```{r}
+sampleTwitter <- rtwitter[sample(1:length(rtwitter),3500)]
+sampleNews <- rnews[sample(1:length(rnews),3500)]
+sampleBlogs <- rblogs[sample(1:length(rblogs),3500)]
+textSample <- c(sampleTwitter,sampleNews,sampleBlogs)
+rm(sampleTwitter)
+rm(sampleNews)
+rm(sampleBlogs)
+```
+
+```{r}
+## Save sample
+writeLines(textSample, "./MilestoneReport/textSample.txt")
+```
+
+```{r}
+theSampleCon <- file("./MilestoneReport/textSample.txt")
+theSample <- readLines(theSampleCon)
+close(theSampleCon)
+```
+
+### Creating a clean Corpus
+
+```{r}
+
+if(!exists("cleanSample")){
+profanityWords <- read.table("./MilestoneReport/profanityfilter.txt", header = FALSE, col.names = "word")
+
+## Build the corpus, and specify the source to be character vectors 
+cleanSample <- Corpus(VectorSource(theSample))
+
+## TODO
+##rm(theSample)
+
+## Make it work with the new tm package
+cleanSample <- tm_map(cleanSample,
+                      content_transformer(function(x) 
+                              iconv(x, to="UTF-8", sub="byte")))
+
+## Convert to lower case
+cleanSample <- tm_map(cleanSample, content_transformer(tolower))
+
+## remove punction, numbers, URLs, stop, profanity and stem wordson
+cleanSample <- tm_map(cleanSample, content_transformer(removePunctuation))
+cleanSample <- tm_map(cleanSample, content_transformer(removeNumbers))
+removeURL <- function(x) gsub("http[[:alnum:]]*", "", x) 
+cleanSample <- tm_map(cleanSample, content_transformer(removeURL))
+cleanSample <- tm_map(cleanSample, stripWhitespace)
+cleanSample <- tm_map(cleanSample, removeWords, stopwords("english"))
+cleanSample <- tm_map(cleanSample, removeWords, profanityWords$word)
+cleanSample <- tm_map(cleanSample, stemDocument)
+cleanSample <- tm_map(cleanSample, stripWhitespace)
+
+## Saving the final corpus
+saveRDS(cleanSample, file = "./MilestoneReport/finalCorpus.RDS")
+}
+rm(cleanSample)
+rm(textSample)
+
+```
+
+# Summary Statistics
+
+```{r}
+## Checking the size and length of the files and calculate the word count
+blogsFile <- file.info(paste(destination,"en_US.blogs.txt",sep="/"))$size / 1024.0 / 1024.0
+newsFile <- file.info(paste(destination,"en_US.news.txt",sep="/"))$size / 1024.0 / 1024.0
+twitterFile <- file.info(paste(destination,"en_US.twitter.txt",sep="/"))$size / 1024.0 / 1024.0
+sampleFile <- file.info("./MilestoneReport/textSample.txt")$size / 1024.0 / 1024.0
+
+blogsLength <- length(rblogs)
+newsLength <- length(rnews)
+twitterLength <- length(rtwitter)
+sampleLength <- length(theSample)
+
+if(!exists('blogsWords')){
+    blogsWords <- sum(sapply(gregexpr("\\S+", rblogs), length))
+    }
+if(!exists('newsWords')){
+    newsWords <- sum(sapply(gregexpr("\\S+", rnews), length))
+    }
+if(!exists('twitterWords')){
+    twitterWords <- sum(sapply(gregexpr("\\S+", rtwitter), length))
+    }
+if(!exists('sampleWords')){
+    sampleWords <- sum(sapply(gregexpr("\\S+", theSample), length))
+    }
+
+rm(rblogs)
+rm(rnews)
+rm(rtwitter)
+rm(theSample)
+
+```
+
+```{r}
+fileSummary <- data.frame(
+        fileName = c("Blogs","News","Twitter", "Aggregated Sample"),
+        fileSize = c(round(blogsFile, digits = 2), 
+                     round(newsFile,digits = 2), 
+                     round(twitterFile, digits = 2),
+                     round(sampleFile, digits = 2)),
+        lineCount = c(blogsLength, newsLength, twitterLength, sampleLength),
+        wordCount = c(blogsWords, newsWords, twitterWords, sampleLength)                  
+)
+```
+
+```{r}
+colnames(fileSummary) <- c("File Name", "File Size in Megabytes", "Line Count", "Word Count")
+
+saveRDS(fileSummary, file = "./MilestoneReport/fileSummary.Rda")
+```
+
+```{r}
+fileSummaryDF <- readRDS("./MilestoneReport/fileSummary.Rda")
+```
+
+The following table provides an overview of the imported data. In addition to the size of each data set, the number of lines and words are displayed. 
+
+```{r}
+knitr::kable(head(fileSummaryDF, 10))
+```
+
+A word cloud usually provides a first overview of the word frequencies. The word cloud displays the data of the aggregated sample file.
+
+```{r}
+finalCorpus <- readRDS("./MilestoneReport/finalCorpus.RDS")
+trigramTDM <- TermDocumentMatrix(finalCorpus)
+rm(finalCorpus)
+gc()
+wcloud <- as.matrix(trigramTDM)
+v <- sort(rowSums(wcloud),decreasing=TRUE)
+d <- data.frame(word = names(v),freq=v)
+wordcloud(d$word,d$freq,
+          c(5,.3),50,
+          random.order=FALSE,
+          colors=brewer.pal(8, "Dark2"))
+```
+
+
+
