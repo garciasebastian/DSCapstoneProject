@@ -11,8 +11,8 @@ output:
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-knitr::opts_chunk$set(cache = FALSE)
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+knitr::opts_chunk$set(cache = TRUE)
 library(RWekajars)
 library(qdapDictionaries)
 library(qdapRegex)
@@ -30,31 +30,33 @@ library(stringr)
 library(DT)
 library(stringi)
 library(googleVis)
+library(ggplot2)
+library(ggthemes)
+library(scales)
+library(dplyr)
 ```
 
 # Introduction
 
-This report will be applying data science in the area of natural language processing in order to help mobile users to enter text quickly and with less errors. The following lines addressing the data extraction, cleaning and text mining of the so called [HC Copora](http://www.corpora.heliohost.org). This report is part of the data science capstone project of [Coursera](https://www.coursera.org) and [Swiftkey](http://swiftkey.com/). The plots, code chunks and remarks will explain the reader the first steps to build the word prediction application.
+This report will be applying data science in the area of natural language processing in order to help mobile users to enter text quickly and with less errors. The following lines addressing the data extraction, cleaning and text mining of the so called HC Copora. This report is part of the data science capstone project of [Coursera](https://www.coursera.org) and [Swiftkey](http://swiftkey.com/). The plots, code chunks and remarks will explain the reader the first steps to build the word prediction application.
 
-This document describes the procedures and code that is use to achieve the objective expressed in project's first three tasks:
+This document describes the procedures and code that is use to achieve the objective expressed in project's first milestone report:
 
-* Task 1: Getting and Cleaning the Data
-* Task 2: Exploratory Data Analysis
-* Task 3: Modeling
+1. Demonstrate that you have downloaded the data from the source site and loaded into R.
+2. Create a basic report of summary statistics about the data sets.
+3. Report any interesting findings that you amassed so far.
+4. Get feedback on your plans for creating a prediction algorithm and Shiny app.
 
 The final objective of the project is to create a "next word" predictor application that can be used in data input applications to suggest the user a list of alternatives for the next word when writing text. This model can be useful for assisting users when writing text in limited devices like mobile phones.
 
-## Task 1: Getting and Cleaning the Data
+# Getting and Cleaning the Data
 The main objetive of this task is to get the data from the source and then clean and sample it.
 
-### Getting and loading the Data
+## Getting and loading the Data
 The data for this project is provided by Coursera, it can be downloaded here [Project Dataset](https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip), the following code will download, unzip and save the files related to English language into the */data* folder.
 
-Since files are huge, downloading and extracting are optimized to be executed only once
-
-```{r}
-#Set source and destination paths
-
+```{r GettingData}
+#Set data destination path
 destination <- file.path(getwd(), "data")
 
 #Create data folder if doesn't exists
@@ -64,178 +66,291 @@ if(!file.exists(destination)){
 
 #Download file if doesn't exists
 if(!file.exists(file.path(destination,"Coursera-SwiftKey.zip"))){
-    download.file("https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip", file.path(destination,"Coursera-SwiftKey.zip"))
+    download.file("https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip", 
+                  url = file.path(destination,"Coursera-SwiftKey.zip"))
 }
 
-#Determine files to unzip, only english files that are not previously unziped
-englishfiles <- unzip(file.path(destination,"Coursera-SwiftKey.zip"),list=TRUE)
-englishfiles <- englishfiles[grepl("en_US.*\\.txt", englishfiles$Name),1]
-englishfiles2 <- englishfiles[!file.exists(file.path(destination,basename(englishfiles)))]
-
-if(length(englishfiles2)>=1){
-    unzip(file.path(destination,"Coursera-SwiftKey.zip"), files = englishfiles, exdir=destination, junkpaths = TRUE)
+#Unzip english files
+sourceFiles = c('en_US.twitter.txt','en_US.blogs.txt','en_US.news.txt')
+if(!all(file.exists(paste(destination,sourceFiles,sep="/")))){
+    unzip(file.path(destination,"Coursera-SwiftKey.zip"), files = paste('final/en_US/',sourceFiles,sep=""), exdir=destination, junkpaths = TRUE)
 }
-rm(englishfiles2)
-englishfiles <- file.path(destination,basename(englishfiles))
-rm('englishfiles')
+
 ```
 
-Now, we load data into datasets
-```{r}
-if(!exists("rblogs")){
-    rblogs <- readLines("./data/en_US.blogs.txt", encoding = "UTF-8", skipNul=TRUE)
-}
-if(!exists("rnews")){
-    rnews <- readLines("./data/en_US.news.txt", encoding = "UTF-8", skipNul=TRUE)
-}
-if(!exists("rtwitter")){
-    rtwitter <- readLines("./data/en_US.twitter.txt", encoding = "UTF-8", skipNul=TRUE)
-}
+Now, we load the data into datasets.
+```{r LoadingData}
+maxRows = 100000000
+
+rBlogs <- readLines("./data/en_US.blogs.txt", encoding = "UTF-8", skipNul=TRUE, n=maxRows)
+rNews <- readLines("./data/en_US.news.txt", encoding = "UTF-8", skipNul=TRUE, n=maxRows)
+rTwitter <- readLines("./data/en_US.twitter.txt", encoding = "UTF-8", skipNul=TRUE, n=maxRows)
+
 ```
 
-### Sampling the Data
+## Sampling the Data
 
+In order to enable faster data processing, data samples from all three sources were generated, mixed together and saved to a text file.
 
-In order to enable faster data processing, a data sample from all three sources was generated and save to a text file.
+```{r SamplingData}
+sampleSize = 10000
+# Sample generation
+sampleTwitter <- rTwitter[sample(1:length(rTwitter),sampleSize)]
+sampleNews <- rNews[sample(1:length(rNews),sampleSize)]
+sampleBlogs <- rBlogs[sample(1:length(rBlogs),sampleSize)]
 
-```{r}
-sampleTwitter <- rtwitter[sample(1:length(rtwitter),3500)]
-sampleNews <- rnews[sample(1:length(rnews),3500)]
-sampleBlogs <- rblogs[sample(1:length(rblogs),3500)]
+# The samples are mixed in a common dataset and writen to a file
 textSample <- c(sampleTwitter,sampleNews,sampleBlogs)
+
+# Save sample
+writeLines(textSample, "./MilestoneReport/textSample.txt")
+
+```
+
+```{r CleanMemory01, echo=FALSE, results='hide'}
 rm(sampleTwitter)
 rm(sampleNews)
 rm(sampleBlogs)
+gc()
 ```
 
-```{r}
-## Save sample
-writeLines(textSample, "./MilestoneReport/textSample.txt")
-```
+## Creating a clean Corpus
+By using the [tm package](http://tm.r-forge.r-project.org/index.html) the sample data gets *cleaned*. 
+By cleaning I mean that the text data is converted into lower case, further punction, numbers and URLs are removed. Next, stop and profanity words are removed from the text sample. At the end we are getting a clean text corpus which enables an easy subsequent processing.
 
-```{r}
-theSampleCon <- file("./MilestoneReport/textSample.txt")
-theSample <- readLines(theSampleCon)
-close(theSampleCon)
-```
+Next, the final corpus is saved to a file for further use.
 
-### Creating a clean Corpus
+The used profanity words can be inspected [in this Github Repository](https://github.com/garciasebastian/DSCapstoneProject/blob/master/MilestoneReport/profanityfilter.txt).
 
-```{r}
-
-if(!exists("cleanSample")){
-profanityWords <- read.table("./MilestoneReport/profanityfilter.txt", header = FALSE, col.names = "word")
-
+```{r CreateCorpus}
 ## Build the corpus, and specify the source to be character vectors 
-cleanSample <- Corpus(VectorSource(theSample))
-
-## TODO
-##rm(theSample)
+cleanCorpus <- Corpus(VectorSource(textSample))
 
 ## Make it work with the new tm package
-cleanSample <- tm_map(cleanSample,
+cleanCorpus <- tm_map(cleanCorpus,
                       content_transformer(function(x) 
                               iconv(x, to="UTF-8", sub="byte")))
 
 ## Convert to lower case
-cleanSample <- tm_map(cleanSample, content_transformer(tolower))
+cleanCorpus <- tm_map(cleanCorpus, content_transformer(tolower))
 
-## remove punction, numbers, URLs, stop, profanity and stem wordson
-cleanSample <- tm_map(cleanSample, content_transformer(removePunctuation))
-cleanSample <- tm_map(cleanSample, content_transformer(removeNumbers))
+## Remove punction, numbers, URLs, stop, profanity 
+cleanCorpus <- tm_map(cleanCorpus, content_transformer(removePunctuation))
+cleanCorpus <- tm_map(cleanCorpus, content_transformer(removeNumbers))
 removeURL <- function(x) gsub("http[[:alnum:]]*", "", x) 
-cleanSample <- tm_map(cleanSample, content_transformer(removeURL))
-cleanSample <- tm_map(cleanSample, stripWhitespace)
-cleanSample <- tm_map(cleanSample, removeWords, stopwords("english"))
-cleanSample <- tm_map(cleanSample, removeWords, profanityWords$word)
-cleanSample <- tm_map(cleanSample, stemDocument)
-cleanSample <- tm_map(cleanSample, stripWhitespace)
+cleanCorpus <- tm_map(cleanCorpus, content_transformer(removeURL))
+cleanCorpus <- tm_map(cleanCorpus, stripWhitespace)
+cleanCorpus <- tm_map(cleanCorpus, removeWords, stopwords("english"))
+profanityWords <- read.table("./MilestoneReport/profanityfilter.txt", header = FALSE, col.names = "word")
+cleanCorpus <- tm_map(cleanCorpus, removeWords, profanityWords$word)
+cleanCorpus <- tm_map(cleanCorpus, stripWhitespace)
 
 ## Saving the final corpus
-saveRDS(cleanSample, file = "./MilestoneReport/finalCorpus.RDS")
-}
-rm(cleanSample)
-rm(textSample)
-
+saveRDS(cleanCorpus, file = "./MilestoneReport/finalCorpus.rds")
 ```
 
-# Summary Statistics
+```{r CleanMemory02, echo=FALSE, results='hide'}
+rm(cleanCorpus)
+rm(profanityWords)
+gc()
+```
 
-```{r}
+# Exploring the Data
+
+## Summary Statistics
+
+The following chunk of code summarizes the information for the source files and sample file.
+```{r SummarizeFiles}
+
+fileSummary <- data.frame(fileName = c("Blogs","News","Twitter","Aggregated Sample"))
+
 ## Checking the size and length of the files and calculate the word count
-blogsFile <- file.info(paste(destination,"en_US.blogs.txt",sep="/"))$size / 1024.0 / 1024.0
-newsFile <- file.info(paste(destination,"en_US.news.txt",sep="/"))$size / 1024.0 / 1024.0
-twitterFile <- file.info(paste(destination,"en_US.twitter.txt",sep="/"))$size / 1024.0 / 1024.0
-sampleFile <- file.info("./MilestoneReport/textSample.txt")$size / 1024.0 / 1024.0
+fileSummary$fileSize = c(
+    file.info(paste(destination,"en_US.blogs.txt",sep="/"))$size / 1024.0 / 1024.0,
+    file.info(paste(destination,"en_US.news.txt",sep="/"))$size / 1024.0 / 1024.0,
+    file.info(paste(destination,"en_US.twitter.txt",sep="/"))$size / 1024.0 / 1024.0,
+    file.info("./MilestoneReport/textSample.txt")$size / 1024.0 / 1024.0)
+fileSummary$fileSize = round(fileSummary$fileSize,3)
 
-blogsLength <- length(rblogs)
-newsLength <- length(rnews)
-twitterLength <- length(rtwitter)
-sampleLength <- length(theSample)
+fileSummary$lineCount = c(length(rBlogs), length(rNews), length(rTwitter), sampleSize*3)
 
-if(!exists('blogsWords')){
-    blogsWords <- sum(sapply(gregexpr("\\S+", rblogs), length))
-    }
-if(!exists('newsWords')){
-    newsWords <- sum(sapply(gregexpr("\\S+", rnews), length))
-    }
-if(!exists('twitterWords')){
-    twitterWords <- sum(sapply(gregexpr("\\S+", rtwitter), length))
-    }
-if(!exists('sampleWords')){
-    sampleWords <- sum(sapply(gregexpr("\\S+", theSample), length))
-    }
-
-rm(rblogs)
-rm(rnews)
-rm(rtwitter)
-rm(theSample)
-
-```
-
-```{r}
-fileSummary <- data.frame(
-        fileName = c("Blogs","News","Twitter", "Aggregated Sample"),
-        fileSize = c(round(blogsFile, digits = 2), 
-                     round(newsFile,digits = 2), 
-                     round(twitterFile, digits = 2),
-                     round(sampleFile, digits = 2)),
-        lineCount = c(blogsLength, newsLength, twitterLength, sampleLength),
-        wordCount = c(blogsWords, newsWords, twitterWords, sampleLength)                  
+fileSummary$wordCount = c(
+    sum(sapply(gregexpr("\\S+", rBlogs), length)),
+    sum(sapply(gregexpr("\\S+", rNews), length)),
+    sum(sapply(gregexpr("\\S+", rTwitter), length)),
+    sum(sapply(gregexpr("\\S+", textSample), length))
 )
-```
 
-```{r}
 colnames(fileSummary) <- c("File Name", "File Size in Megabytes", "Line Count", "Word Count")
 
-saveRDS(fileSummary, file = "./MilestoneReport/fileSummary.Rda")
 ```
 
-```{r}
-fileSummaryDF <- readRDS("./MilestoneReport/fileSummary.Rda")
+```{r CleanMemory03, echo=FALSE, results='hide'}
+rm(sampleTwitter)
+rm(sampleNews)
+rm(sampleBlogs)
+rm(rTwitter)
+rm(rNews)
+rm(rBlogs)
+rm(textSample)
+gc()
 ```
 
 The following table provides an overview of the imported data. In addition to the size of each data set, the number of lines and words are displayed. 
 
-```{r}
-knitr::kable(head(fileSummaryDF, 10))
+```{r ShowSummary, echo=FALSE, results='as-is' }
+knitr::kable(fileSummary)
 ```
 
-A word cloud usually provides a first overview of the word frequencies. The word cloud displays the data of the aggregated sample file.
+```{r CleanMemory04, echo=FALSE, results='hide'}
+rm(fileSummary)
+gc()
+```
 
-```{r}
-finalCorpus <- readRDS("./MilestoneReport/finalCorpus.RDS")
-trigramTDM <- TermDocumentMatrix(finalCorpus)
+## Word Cloud
+
+A word cloud provides a first overview of the word frequencies in a easily view. The word cloud displays the data of the aggregated sample file in terms of word frequency.
+
+```{r WordCloud, results='hide', fig.align='center'}
+#Load Corpus
+finalCorpus <- readRDS("./MilestoneReport/finalCorpus.rds")
+termMatrix <- TermDocumentMatrix(finalCorpus)
+
+words <- data.frame(word = termMatrix$dimnames$Terms, 
+                   freq = sapply(c(1:termMatrix$nrow), #termMatrix$nrow
+                                  FUN = function(x){sum(termMatrix[x,])}, simplify=TRUE), 
+                   stringsAsFactors = FALSE) %>%
+            arrange(desc(freq))
+        
+words <- words[1:1000,]
+
+#Clean memory 
 rm(finalCorpus)
 gc()
-wcloud <- as.matrix(trigramTDM)
-v <- sort(rowSums(wcloud),decreasing=TRUE)
-d <- data.frame(word = names(v),freq=v)
-wordcloud(d$word,d$freq,
+
+#Create word cloud
+wordcloud(words$word,words$freq,
           c(5,.3),50,
           random.order=FALSE,
           colors=brewer.pal(8, "Dark2"))
 ```
 
+```{r CleanMemory05, echo=FALSE, results='hide'}
+rm(s)
+rm(df)
+rm(wCloud)
+rm(termMatrix)
+gc()
+```
+
+# The N-Gram Tokenization
+
+In Natural Language Processing (NLP) an *n*-gram is a contiguous sequence of n items from a given sequence of text or speech.
+
+The following function is used to extract *n*-grams from the cleaned text corpus, where *n* is the number of consecutive words.
+
+```{r NGramFunction}
+
+#Read corpus and convert to dataframe
+finalCorpus <- readRDS("./MilestoneReport/finalCorpus.rds")
+finalCorpusDF <- data.frame(text=unlist(finalCorpus),stringsAsFactors = FALSE)
+rownames(finalCorpusDF) <- NULL
+
+#Create tokenizer function
+ngramTokenizer <- function(theCorpus, ngramCount, topn) {
+        ngramFunction <- NGramTokenizer(theCorpus, 
+                                Weka_control(min = ngramCount, max = ngramCount, 
+                                delimiters = " \\r\\n\\t.,;:\"()?!"))
+        ngramFunction <- data.frame(table(ngramFunction))
+        ngramFunction <- ngramFunction[order(ngramFunction$Freq, 
+                                             decreasing = TRUE),]
+        colnames(ngramFunction) <- c("word","wcount")
+        ngramFunction
+}
+```
+ 
+By the usage of the tokenizer function for the *n*-grams a distribution of the following top 10 words and word combinations can be inspected. Unigrams are single words, while bigrams are two word combinations and trigrams are three word combinations.
+
+## Top 20 Unigrams
+
+The following graphs show the Top 20 Unigrams in the sample
+
+```{r Unigrams, echo=FALSE, results="asis", fig.align='center'}
+unigram <- ngramTokenizer(finalCorpusDF, 1)
+
+g <- ggplot(data=unigram[1:20,],aes(x=reorder(word,wcount))) + 
+        geom_bar(aes(weight = wcount)) + 
+        coord_flip() + 
+        labs(x="", y="1-gram Count", title="Top 20 1-grams in Sample Dataset") +
+        scale_color_ptol("cyl") +
+        theme_minimal()
+
+print(g)
+```
 
 
+## Top 20 Bigrams
+
+The following graphs show the Top 20 2-grams in the sample
+
+```{r Bigrams, echo=FALSE, results="asis", fig.align='center'}
+bigram <- ngramTokenizer(finalCorpusDF, 2)
+g <- ggplot(data=bigram[1:20,],aes(x=reorder(word,wcount))) + 
+        geom_bar(aes(weight = wcount)) + 
+        coord_flip() + 
+        labs(x="", y="2-gram Count", title="Top 20 2-grams in Sample Dataset") +
+        scale_color_ptol("cyl") +
+        theme_minimal()
+
+print(g)
+```
+
+## Top 20 Trigrams
+
+The following graphs show the Top 20 3-grams in the sample
+
+```{r Trigrams, echo=FALSE, results="asis", fig.align='center'}
+trigram <- ngramTokenizer(finalCorpusDF, 3)
+g <- ggplot(data=trigram[1:20,],aes(x=reorder(word,wcount))) + 
+        geom_bar(aes(weight = wcount)) + 
+        coord_flip() + 
+        labs(x="Unigrams", y="3-gram Count", title="Top 20 3-grams in Sample Dataset") +
+        scale_color_ptol("cyl") +
+        theme_minimal()
+
+print(g)
+```
+
+```{r CleanMemory06, echo=FALSE, results='hide'}
+rm(unigram)
+rm(bigram)
+rm(trigram)
+rm(finalCorpus)
+rm(finalCorpusDF)
+rm(unigramPlot)
+rm(bigramPlot)
+rm(trigramPlot)
+gc()
+```
+
+# Interesting Findings
+
++ Loading the dataset costs a lot of time. The processing is time consuming because of the huge file size of the dataset. By avoiding endless runtimes of the code, it was indispensable to create a data sample for text mining and tokenization. Nedless to say, this workaround decreases the accuracy for the subsequent predictions.
+
++ Removing all stopwords from the corpus is recommended, but, of course, stopwords are a fundamental part of languages. Therefore, consideration should be given to include these stop words in the prediction application again.
+
+# Next Steps For The Prediction Application
+
+As already noted, the next step of the capstone project will be to create a prediction application. 
+To create a smooth and fast application it is absolutely necessary to build a fast prediction algorithm. This is also means, I need to find ways for a faster processing of larger datasets. Next to that,  increasing the value of n for n-gram tokenization will improve the prediction accuracy. All in all a shiny application will be created which will be able to predict the next word a user wants to write.
+
+# All Used Code Scripts
+
+All used code snippets to generate this report can be viewed in this [repository](https://github.com/garciasebastian/DSCapstoneProject/tree/master).
+
+# Session Information
+
+For reproducibility, R session information is provided in the following output, variables where cleaned during code execution due to high memory requirements for text processing.
+```{r Session, echo=FALSE}
+sessionInfo()
+```
