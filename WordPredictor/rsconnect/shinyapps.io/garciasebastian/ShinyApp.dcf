@@ -1,0 +1,10 @@
+name: ShinyApp
+title: WordPredictor
+account: garciasebastian
+server: shinyapps.io
+appId: 207974
+bundleId: 957344
+url: https://garciasebastian.shinyapps.io/ShinyApp/
+when: 1503928853.55807
+asMultiple: FALSE
+asStatic: FALSE
